@@ -307,12 +307,20 @@ struct aw_device {
 #ifdef CONFIG_AW_RAMPING_SUPPORT
 	uint32_t ramp_en;
 	uint32_t ramp_in_process;
-	unsigned long ramp_jiffies;	/* time of last ramp event for debounce */
+	uint32_t ramp_running;
 	struct workqueue_struct *ramp_queue;
 	struct delayed_work ramp_work;
 	struct delayed_work attenuate_work;
 	uint32_t attenuate_en;
 	uint32_t attenuate_in_process;
+	/*
+	 * Cadence-based ramp tracking: gain_ramp_end_work runs on its own
+	 * dedicated workqueue and clears ramp_in_process once ramp activity
+	 * stops, so the flag can never stay stuck at 1 after a ramp settles.
+	 */
+	unsigned long gain_ramp_jiffies;
+	struct delayed_work gain_ramp_end_work;
+	struct workqueue_struct *gain_ramp_wq;
 #endif
 };
 
