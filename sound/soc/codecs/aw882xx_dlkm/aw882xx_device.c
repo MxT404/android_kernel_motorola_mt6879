@@ -30,6 +30,7 @@
 #endif
 
 #define AW_DEV_SYSST_CHECK_MAX   (10)
+#define AW_RAMP_DEBOUNCE_MS		500	/* 500 ms debounce for stuck ramp_in_process */
 
 char ext_dsp_prof_write = AW_EXT_DSP_WRITE_NONE;
 static DEFINE_MUTEX(g_ext_dsp_prof_wr_lock); /*lock ext wr flag*/
@@ -380,6 +381,7 @@ int aw882xx_dev_set_ramp_status(struct aw_device *aw_dev, uint32_t set_ramp)
         // set ramp for top speaker only
         if (aw_dev->channel == 0) {
                 aw_dev->ramp_en = set_ramp;
+                aw_dev->ramp_jiffies = jiffies;
 
                 //cancel ramp if in process
                 if(set_ramp == 0)
@@ -421,6 +423,14 @@ static void aw_dev_do_ramp(struct aw_device *aw_dev)
         struct aw_volume_desc *desc = &aw_dev->volume_desc;
         uint16_t ramp_target_vol = desc->init_volume;
         unsigned int vol;
+
+        /* debounce: clear stuck ramp_in_process if no progress within window */
+        if (aw_dev->ramp_in_process &&
+            time_after(jiffies, aw_dev->ramp_jiffies +
+                       msecs_to_jiffies(AW_RAMP_DEBOUNCE_MS))) {
+                aw_dev_info(aw_dev->dev, "ramp debounce timeout, clearing ramp_in_process");
+                aw_dev->ramp_in_process = 0;
+        }
 
         if ((!aw_dev->ramp_en) || (!aw_dev->ramp_in_process))
                 return;
@@ -666,6 +676,7 @@ static void aw_dev_mute(struct aw_device *aw_dev, bool mute)
                                 aw_dev_info(aw_dev->dev,"ramp already in process");
                         } else {
                                 aw_dev->ramp_in_process = 1;
+                                aw_dev->ramp_jiffies = jiffies;
                                 queue_delayed_work(aw_dev->ramp_queue,
                                                 &aw_dev->ramp_work,
                                                 0);

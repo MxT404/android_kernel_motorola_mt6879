@@ -61,6 +61,7 @@
 #define AW_RTP_NAME_MAX				(64)
 #define AW_PM_QOS_VALUE_VB			(400)
 #define AW_DRV2_LVL_MAX				(0x7F)
+#define AW_HAPTIC_GAIN_SCALE			(70)	/* 70% = softer vibration */
 #define AW_VBAT_REFER				(4200)
 #define AW_VBAT_MIN				(3000)
 #define AW_VBAT_MAX				(4500)

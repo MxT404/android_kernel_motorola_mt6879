@@ -1562,7 +1562,7 @@ static void aw8692x_misc_para_init(struct aw_haptic *aw_haptic)
 	/* Get gain */
 	haptic_hv_i2c_reads(aw_haptic, AW8692X_REG_PLAYCFG2, reg_val,
 			    AW_I2C_BYTE_ONE);
-	aw_haptic->gain = reg_val[0];
+	aw_haptic->gain = reg_val[0] * AW_HAPTIC_GAIN_SCALE / 100;
 	/* Get wave_seq */
 	haptic_hv_i2c_reads(aw_haptic, AW8692X_REG_WAVCFG1, reg_val,
 			    AW_I2C_BYTE_EIGHT);

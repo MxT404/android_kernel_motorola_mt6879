@@ -307,6 +307,7 @@ struct aw_device {
 #ifdef CONFIG_AW_RAMPING_SUPPORT
 	uint32_t ramp_en;
 	uint32_t ramp_in_process;
+	unsigned long ramp_jiffies;	/* time of last ramp event for debounce */
 	struct workqueue_struct *ramp_queue;
 	struct delayed_work ramp_work;
 	struct delayed_work attenuate_work;

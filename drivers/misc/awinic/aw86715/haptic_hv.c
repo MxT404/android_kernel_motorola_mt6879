@@ -949,7 +949,7 @@ static void input_set_gain(struct input_dev *dev, uint16_t gain)
 
 	if (gain > 0x7fff)
 		gain = 0x7fff;
-	aw_haptic->gain = gain * 0x80 / 0x7fff;
+	aw_haptic->gain = (gain * 0x80 / 0x7fff) * AW_HAPTIC_GAIN_SCALE / 100;
 	schedule_work(&aw_haptic->gain_work);
 	aw_info("aw_haptic->gain = 0x%02x", aw_haptic->gain);
 }
