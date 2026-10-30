@@ -42,7 +42,7 @@
  * a few steps of attenuation on the top amp only gives that speaker back the
  * headroom it needs; the bottom speaker is left untouched. 0 disables it.
  */
-#define AW_TOP_SPK_VOL_OFFSET_DEFAULT	6	/* 6 * 0.5dB = 3dB */
+#define AW_TOP_SPK_VOL_OFFSET_DEFAULT	12	/* 12 * 0.5dB = 6dB */
 static unsigned int top_spk_vol_offset = AW_TOP_SPK_VOL_OFFSET_DEFAULT;
 module_param_named(top_spk_vol_offset, top_spk_vol_offset, uint, 0600);
 MODULE_PARM_DESC(top_spk_vol_offset,
@@ -377,10 +377,12 @@ static int aw_dev_reg_fw_update(struct aw_device *aw_dev)
 	}
 
 	aw_dev->ops.aw_get_volume(aw_dev, &init_volume);
+	aw_dev->top_vol_offset_applied = 0;
 	if ((aw_dev->channel == 0) && (top_spk_vol_offset != 0)) {
 		init_volume += top_spk_vol_offset;
+		aw_dev->top_vol_offset_applied = (int)top_spk_vol_offset;
 		aw_dev_info(aw_dev->dev,
-			"top spk attenuation +%u (0.5dB steps), init_volume %u",
+			"top spk attenuation %u (0.5dB steps), init_volume %u",
 			top_spk_vol_offset, init_volume);
 	}
 	aw_dev->volume_desc.init_volume = init_volume;
@@ -441,9 +443,14 @@ int aw882xx_dev_set_volume(struct aw_device *aw_dev, unsigned int set_vol)
 static void aw_dev_do_ramp(struct aw_device *aw_dev)
 {
         int i = 0;
-        struct aw_volume_desc *desc = &aw_dev->volume_desc;
-        uint16_t ramp_target_vol = desc->init_volume;
-        unsigned int vol;
+        unsigned int vol = 0;
+
+        /*
+         * g_ramp_volume[] holds attenuation offsets, while
+         * aw882xx_dev_set_volume() adds volume_desc.init_volume itself, so the
+         * ramp ends at offset 0 (= the profile volume). Clamping the offset
+         * against init_volume would attenuate the last steps twice.
+         */
 
         if ((!aw_dev->ramp_en) || (!aw_dev->ramp_in_process))
                 return;
@@ -451,8 +458,6 @@ static void aw_dev_do_ramp(struct aw_device *aw_dev)
         /*volume up*/
         for (i = 0; i < g_ramp_step; i++) {
                 vol = g_ramp_volume[i];
-                if (vol < ramp_target_vol)
-                        vol = ramp_target_vol;
 
                 aw_pr_info("ramp on, step:%d,set vol :%d",i,vol);
                 aw882xx_dev_set_volume(aw_dev, vol);
@@ -464,9 +469,9 @@ static void aw_dev_do_ramp(struct aw_device *aw_dev)
                 }
         }
 
-        if (vol != ramp_target_vol){
-                aw_pr_info("set target_vol:%d",ramp_target_vol);
-                aw882xx_dev_set_volume(aw_dev, ramp_target_vol);
+        if (vol != 0){
+                aw_pr_info("set target offset:0");
+                aw882xx_dev_set_volume(aw_dev, 0);
         }
 
         aw_pr_info("ramp done");
@@ -503,7 +508,8 @@ static void aw_dev_attenuate_work(struct work_struct *work)
 
         if (aw_dev->attenuate_in_process){
                 aw_dev_info(aw_dev->dev,"5s later, restore attenuattion, init_volume = %d", desc->init_volume);
-                aw882xx_dev_set_volume(aw_dev, desc->init_volume);
+                /* offset 0 == the profile volume aw882xx_dev_set_volume() adds */
+                aw882xx_dev_set_volume(aw_dev, 0);
                 aw_dev->attenuate_in_process = 0;
         } else {
                 aw_dev_info(aw_dev->dev,"attenuattion is 0, do nothing");
@@ -649,9 +655,34 @@ static void aw_dev_amppd(struct aw_device *aw_dev, bool amppd)
 	aw_dev_info(aw_dev->dev, "done");
 }
 
+/*
+ * top_spk_vol_offset can be written at runtime, so fold a changed value into
+ * init_volume on the next unmute instead of requiring a reboot. Only the
+ * difference is applied, the profile volume itself is never touched.
+ */
+static void aw_dev_update_top_vol_offset(struct aw_device *aw_dev)
+{
+	int delta = (int)top_spk_vol_offset - aw_dev->top_vol_offset_applied;
+	int init_volume;
+
+	if ((aw_dev->channel != 0) || (delta == 0))
+		return;
+
+	init_volume = aw_dev->volume_desc.init_volume + delta;
+	if (init_volume > aw_dev->volume_desc.mute_volume)
+		init_volume = aw_dev->volume_desc.mute_volume;
+
+	aw_dev->volume_desc.init_volume = init_volume;
+	aw_dev->top_vol_offset_applied = (int)top_spk_vol_offset;
+	aw_dev_info(aw_dev->dev, "top spk offset %d, init_volume %d",
+		    aw_dev->top_vol_offset_applied, init_volume);
+}
+
 static void aw_dev_mute(struct aw_device *aw_dev, bool mute)
 {
 	struct aw_mute_desc *mute_desc = &aw_dev->mute_desc;
+
+	aw_dev_update_top_vol_offset(aw_dev);
 
 	aw_dev_dbg(aw_dev->dev, "enter, mute: %d, cali_result: %d",
 				mute, aw_dev->cali_desc.cali_result);

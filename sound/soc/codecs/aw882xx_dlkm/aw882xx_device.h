@@ -295,6 +295,7 @@ struct aw_device {
 	struct aw_temperature_desc temp_desc;
 	struct aw_ipeak_desc ipeak_desc;
 	struct aw_volume_desc volume_desc;
+	int top_vol_offset_applied;	/* top spk offset already added to init_volume */
 	struct aw_prof_info prof_info;
 	struct aw_cali_desc cali_desc;
 	struct aw_monitor_desc monitor_desc;
