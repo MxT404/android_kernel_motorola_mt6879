@@ -1071,6 +1071,23 @@ static void aw882xx_interrupt_work(struct work_struct *work)
 }
 #endif
 
+/*
+ * The AW RX module is the Awinic algorithm the DSP runs on top of the
+ * amplifier: it applies the limiter/excursion curve the speaker was calibrated
+ * with. The HAL switches it off through aw882xx_rx_switch for the
+ * voice/receiver scene, where it made the call path sound robotized. Keep it
+ * enabled while music is playing -- with the module bypassed the speaker is
+ * left with no protection at all and distorts at high volume, which is most
+ * audible on the smaller top speaker.
+ */
+static bool aw882xx_rx_module_bypass_allowed(struct aw882xx *aw882xx)
+{
+	if (!aw882xx->aw_pa)
+		return false;
+
+	return aw882xx->aw_pa->cur_prof > 0;
+}
+
 static int aw882xx_set_rx_en(struct snd_kcontrol *kcontrol,
 	struct snd_ctl_elem_value *ucontrol)
 {
@@ -1085,6 +1102,12 @@ static int aw882xx_set_rx_en(struct snd_kcontrol *kcontrol,
 				ucontrol->value.integer.value[0]);
 
 	ctrl_value = ucontrol->value.integer.value[0];
+
+	if (!ctrl_value && !aw882xx_rx_module_bypass_allowed(aw882xx)) {
+		aw_dev_info(aw882xx->dev,
+			"rx module bypass not allowed, keeping it enabled");
+		ctrl_value = 1;
+	}
 
 	if (aw882xx->pstream) {
 		ret = aw882xx_dev_set_afe_module_en(AW_RX_MODULE, ctrl_value);
@@ -1257,8 +1280,12 @@ static int aw882xx_get_copp_en(struct snd_kcontrol *kcontrol,
 void aw882xx_kcontorl_set(struct aw882xx *aw882xx)
 {
 	int ret;
+	int rx_en = g_algo_rx_en;
 
-	ret = aw882xx_dev_set_afe_module_en(AW_RX_MODULE, g_algo_rx_en);
+	if (!rx_en && !aw882xx_rx_module_bypass_allowed(aw882xx))
+		rx_en = 1;
+
+	ret = aw882xx_dev_set_afe_module_en(AW_RX_MODULE, rx_en);
 	if (ret)
 		aw_dev_err(aw882xx->dev, "afe set, ret=%d", ret);
 

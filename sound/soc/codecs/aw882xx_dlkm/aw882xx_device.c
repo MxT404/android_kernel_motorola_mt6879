@@ -31,6 +31,23 @@
 
 #define AW_DEV_SYSST_CHECK_MAX   (10)
 
+/*
+ * Extra attenuation held back on the ramped (top, channel 0) amplifier, in
+ * 0.5 dB steps -- the step size of the AW88261 volume register.
+ *
+ * The music stream reaches the amplifier already boosted by the DSP, so a
+ * boosted chain (Dolby/effects) drives the small top speaker past the
+ * excursion its profile is calibrated for and it distorts from roughly 80%
+ * volume upwards, while the bigger bottom speaker still has headroom. Keeping
+ * a few steps of attenuation on the top amp only gives that speaker back the
+ * headroom it needs; the bottom speaker is left untouched. 0 disables it.
+ */
+#define AW_TOP_SPK_VOL_OFFSET_DEFAULT	6	/* 6 * 0.5dB = 3dB */
+static unsigned int top_spk_vol_offset = AW_TOP_SPK_VOL_OFFSET_DEFAULT;
+module_param_named(top_spk_vol_offset, top_spk_vol_offset, uint, 0600);
+MODULE_PARM_DESC(top_spk_vol_offset,
+	"extra attenuation in 0.5dB steps for the top speaker (0 disables)");
+
 char ext_dsp_prof_write = AW_EXT_DSP_WRITE_NONE;
 static DEFINE_MUTEX(g_ext_dsp_prof_wr_lock); /*lock ext wr flag*/
 static unsigned int g_fade_in_time = AW_1000_US / 10;
@@ -360,6 +377,12 @@ static int aw_dev_reg_fw_update(struct aw_device *aw_dev)
 	}
 
 	aw_dev->ops.aw_get_volume(aw_dev, &init_volume);
+	if ((aw_dev->channel == 0) && (top_spk_vol_offset != 0)) {
+		init_volume += top_spk_vol_offset;
+		aw_dev_info(aw_dev->dev,
+			"top spk attenuation +%u (0.5dB steps), init_volume %u",
+			top_spk_vol_offset, init_volume);
+	}
 	aw_dev->volume_desc.init_volume = init_volume;
 
 	/*keep min volume*/
