@@ -30,7 +30,6 @@
 #endif
 
 #define AW_DEV_SYSST_CHECK_MAX   (10)
-#define AW_RAMP_DEBOUNCE_MS		500	/* 500 ms debounce for stuck ramp_in_process */
 
 char ext_dsp_prof_write = AW_EXT_DSP_WRITE_NONE;
 static DEFINE_MUTEX(g_ext_dsp_prof_wr_lock); /*lock ext wr flag*/
@@ -49,72 +48,6 @@ static unsigned int g_ramp_volume[22] = {221,221,
 
 static unsigned int g_ramp_time_ms = 100; //100ms
 static unsigned int g_ramp_step = 22; //step0~step21
-#define AW_GAIN_RAMP_DEBOUNCE_MS	50	/* 50 ms debounce for stuck ramp_in_process */
-
-/*
- * The volume ramp is a blocking sequence of g_ramp_step writes spaced
- * g_ramp_time_ms apart, so the quiet window that ends it is measured from
- * the moment the ramp is expected to finish rather than from the last
- * kcontrol write. A ramp that never completes (or never runs at all) is
- * cut short by this timeout instead of leaving ramp_in_process stuck at 1.
- */
-static unsigned long aw_dev_gain_ramp_window(void)
-{
-	return msecs_to_jiffies(g_ramp_time_ms * g_ramp_step +
-				AW_GAIN_RAMP_DEBOUNCE_MS);
-}
-
-static void aw_dev_gain_ramp_arm(struct aw_device *aw_dev,
-				 unsigned long delay)
-{
-	struct workqueue_struct *wq = aw_dev->gain_ramp_wq;
-
-	if (!wq)
-		wq = aw_dev->ramp_queue;
-
-	if (wq)
-		mod_delayed_work(wq, &aw_dev->gain_ramp_end_work, delay);
-}
-
-static void aw_dev_gain_ramp_end_work(struct work_struct *work)
-{
-	struct aw_device *aw_dev = container_of(to_delayed_work(work),
-						struct aw_device, gain_ramp_end_work);
-	unsigned long debounce = msecs_to_jiffies(AW_GAIN_RAMP_DEBOUNCE_MS);
-
-	/*
-	 * A ramp is still queued or running, so its cadence has not stopped
-	 * yet. Keep the flag and check again shortly instead of cancelling a
-	 * slow ramp halfway through.
-	 */
-	if (aw_dev->ramp_running ||
-	    delayed_work_pending(&aw_dev->ramp_work)) {
-		aw_dev_gain_ramp_arm(aw_dev, debounce);
-		return;
-	}
-
-	/*
-	 * No ramp activity arrived within the debounce window, so whatever
-	 * ramp was requested has settled at its target. Clear the flag
-	 * regardless of the volume it stopped at instead of waiting for a
-	 * mute transition to be considered "ended": while stuck at 1,
-	 * aw_monitor_work() skips its periodic thermal/voltage gain writes
-	 * and the normal fade-in is bypassed, which is audible as distortion
-	 * at high volume on the ramped (top) speaker.
-	 */
-	if (aw_dev->ramp_in_process) {
-		aw_dev->ramp_in_process = 0;
-		aw_dev_info(aw_dev->dev, "ramp ended (debounce timeout, %ums)",
-			    jiffies_to_msecs(jiffies - aw_dev->gain_ramp_jiffies));
-	}
-}
-
-static void aw_dev_gain_ramp_start(struct aw_device *aw_dev)
-{
-	aw_dev->gain_ramp_jiffies = jiffies;
-	aw_dev->ramp_in_process = 1;
-	aw_dev_gain_ramp_arm(aw_dev, aw_dev_gain_ramp_window());
-}
 #endif
 
 static unsigned int g_fade_out_time = AW_1000_US >> 1;
@@ -449,11 +382,8 @@ int aw882xx_dev_set_ramp_status(struct aw_device *aw_dev, uint32_t set_ramp)
                 aw_dev->ramp_en = set_ramp;
 
                 //cancel ramp if in process
-                if (set_ramp == 0) {
+                if(set_ramp == 0)
                         aw_dev->ramp_in_process = 0;
-                        if (aw_dev->gain_ramp_wq)
-                                cancel_delayed_work(&aw_dev->gain_ramp_end_work);
-                }
         }
 
         return 0;
@@ -492,10 +422,8 @@ static void aw_dev_do_ramp(struct aw_device *aw_dev)
         uint16_t ramp_target_vol = desc->init_volume;
         unsigned int vol;
 
-        if ((!aw_dev->ramp_en) || (!aw_dev->ramp_in_process)) {
-                aw_dev->ramp_in_process = 0;
+        if ((!aw_dev->ramp_en) || (!aw_dev->ramp_in_process))
                 return;
-        }
 
         /*volume up*/
         for (i = 0; i < g_ramp_step; i++) {
@@ -519,8 +447,6 @@ static void aw_dev_do_ramp(struct aw_device *aw_dev)
         }
 
         aw_pr_info("ramp done");
-        /* ramp settled at its target, no debounce timeout left to wait for */
-        cancel_delayed_work(&aw_dev->gain_ramp_end_work);
 
         aw_dev->ramp_in_process = 0;
 }
@@ -530,9 +456,7 @@ static void aw_dev_ramp_work(struct work_struct *work)
         struct aw_device *aw_dev =
                 container_of(work, struct aw_device, ramp_work.work);
 
-        aw_dev->ramp_running = 1;
         aw_dev_do_ramp(aw_dev);
-        aw_dev->ramp_running = 0;
 }
 
 static void aw_dev_attenuate_work(struct work_struct *work)
@@ -741,7 +665,7 @@ static void aw_dev_mute(struct aw_device *aw_dev, bool mute)
                         if (aw_dev->ramp_in_process) {
                                 aw_dev_info(aw_dev->dev,"ramp already in process");
                         } else {
-                                aw_dev_gain_ramp_start(aw_dev);
+                                aw_dev->ramp_in_process = 1;
                                 queue_delayed_work(aw_dev->ramp_queue,
                                                 &aw_dev->ramp_work,
                                                 0);
@@ -1435,22 +1359,8 @@ int aw882xx_device_probe(struct aw_device *aw_dev)
         INIT_DELAYED_WORK(&aw_dev->ramp_work, aw_dev_ramp_work);
         INIT_DELAYED_WORK(&aw_dev->attenuate_work, aw_dev_attenuate_work);
 
-        /*
-         * The debounce work must not share ramp_queue: aw_dev_ramp_work()
-         * sleeps for the whole ramp duration on that single-threaded queue,
-         * which would delay (and defeat) the timeout.
-         */
-        aw_dev->gain_ramp_wq = alloc_ordered_workqueue("aw882xx_gain_ramp",
-                                                       WQ_HIGHPRI);
-        if (!aw_dev->gain_ramp_wq)
-                aw_dev_err(aw_dev->dev, "create gain ramp workqueue failed");
-        INIT_DELAYED_WORK(&aw_dev->gain_ramp_end_work,
-                          aw_dev_gain_ramp_end_work);
-        aw_dev->gain_ramp_jiffies = 0;
-
         aw_dev->ramp_en = 0;
         aw_dev->ramp_in_process = 0;
-        aw_dev->ramp_running = 0;
         aw_dev->attenuate_en = 0;
         aw_dev->attenuate_in_process = 0;
 #endif
@@ -1468,12 +1378,6 @@ int aw882xx_device_remove(struct aw_device *aw_dev)
 #ifdef CONFIG_AW_RAMPING_SUPPORT
         cancel_delayed_work_sync(&aw_dev->ramp_work);
         cancel_delayed_work_sync(&aw_dev->attenuate_work);
-        cancel_delayed_work_sync(&aw_dev->gain_ramp_end_work);
-
-        if (aw_dev->gain_ramp_wq) {
-                destroy_workqueue(aw_dev->gain_ramp_wq);
-                aw_dev->gain_ramp_wq = NULL;
-        }
 
         if (aw_dev->ramp_queue)
                 destroy_workqueue(aw_dev->ramp_queue);
